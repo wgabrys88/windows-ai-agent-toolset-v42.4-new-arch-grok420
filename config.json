@@ -1,0 +1,22 @@
+{
+  "server_host": "127.0.0.1",
+  "server_port": 1234,
+  "vlm_endpoint_url": "http://127.0.0.1:1235/v1/chat/completions",
+  "vlm_model_name": "huihui-qwen3-vl-2b-instruct-abliterated",
+  "vlm_timeout_seconds": 120,
+  "vlm_request_delay_seconds": 0,
+  "max_orchestrator_vlm_concurrent": 1,
+  "max_agent_vlm_concurrent": 5,
+  "max_parallel_agents": 1,
+  "capture_region": "150,150,250,250",
+  "capture_width": 640,
+  "capture_height": 640,
+  "capture_interval_seconds": 3.0,
+  "action_delay_seconds": 0.15,
+  "show_cursor": true,
+  "cursor_color": "#ff4444",
+  "cursor_arm": 14,
+  "brain_file": "brain_agentic.py",
+  "log_to_disk": true,
+  "log_dir": "logs"
+}

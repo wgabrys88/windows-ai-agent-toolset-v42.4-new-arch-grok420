@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Franz Panel</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+--bg:#0a0a0c;--surface:#121218;--surface2:#18181f;--border:#252530;
+--accent:#4a9eff;--text:#e4e4ec;--text-dim:#55556a;--text-mid:#8e8ea8;
+--ok:#3ecf8e;--warn:#f0a000;--err:#ff4455;--radius:10px;
+--mono:"Cascadia Code","Fira Code","Consolas",monospace;
+--split-x:55%
+}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;font-size:13px}
+#root{display:grid;width:100vw;height:calc(100vh - 28px);grid-template-columns:var(--split-x) 5px 1fr;grid-template-rows:1fr}
+#gutter{grid-column:2;background:var(--border);cursor:col-resize;transition:background .15s;z-index:10}
+#gutter:hover{background:var(--accent)}
+#pane-canvas{grid-column:1;display:flex;flex-direction:column;overflow:hidden}
+.pane-hdr{display:flex;align-items:center;gap:8px;padding:5px 12px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim)}
+.badge{padding:1px 8px;border-radius:20px;font-size:10px;font-weight:700;background:var(--border);color:var(--text-mid)}
+.badge.ok{background:#1a3d2e;color:var(--ok)}
+.badge.warn{background:#3d2e00;color:var(--warn)}
+.badge.err{background:#3d0a10;color:var(--err)}
+.spacer{flex:1}
+.hdr-btn{padding:2px 8px;border-radius:4px;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;background:var(--border);color:var(--text-mid);border:none;font-family:inherit}
+.hdr-btn:hover{background:var(--accent);color:#fff}
+#canvas-wrap{flex:1;display:flex;align-items:center;justify-content:center;background:#050508;position:relative;overflow:hidden}
+#canvas-stack{position:relative}
+#canvas-stack canvas{position:absolute;top:0;left:0}
+#c-base{position:relative;display:block}
+#c-overlay{pointer-events:none}
+.canvas-status{position:absolute;bottom:6px;right:8px;font-size:10px;color:var(--text-dim);font-family:var(--mono);pointer-events:none}
+#pane-swarm{grid-column:3;display:flex;flex-direction:column;overflow:hidden}
+.agent-status-bar{display:flex;flex-wrap:wrap;gap:4px;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
+.agent-chip{display:flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;background:var(--surface2);border:1px solid var(--border);transition:border-color .2s}
+.chip-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.chip-name{color:var(--text-mid)}
+.chip-status{color:var(--text-dim);font-weight:600;font-size:9px;text-transform:capitalize}
+.chip-dot.idle{background:var(--text-dim)}
+.chip-dot.awaiting_vlm{background:var(--warn);animation:pulse 1.2s infinite}
+.chip-dot.thinking{background:var(--accent);animation:pulse .8s infinite}
+.chip-dot.acting{background:var(--ok)}
+.chip-dot.error{background:var(--err)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.swarm-rows{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.agent-row{border-bottom:1px solid var(--border)}
+.agent-row-hdr{display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;user-select:none;background:var(--surface);transition:background .1s}
+.agent-row-hdr:hover{background:var(--surface2)}
+.agent-label{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:1px 7px;border-radius:4px;flex-shrink:0}
+.agent-label.Harper{background:#1a2a40;color:#6ab0ff}
+.agent-label.Benjamin{background:#1a2a3a;color:#88bbff}
+.agent-label.Lucas{background:#2a1a3a;color:#cc88ff}
+.agent-label.Atlas{background:#1a3020;color:#5edf8e}
+.agent-label.Nova{background:#3a2a10;color:#ffaa44}
+.agent-label.Grok{background:#2a2a30;color:#a0a0b8}
+.agent-row-dir{font-size:10px;font-family:var(--mono);color:var(--text-dim)}
+.agent-row-dir.input{color:#6ab0ff}
+.agent-row-dir.output{color:#5edf8e}
+.agent-row-dir.error{color:var(--err)}
+.agent-row-ts{font-size:9px;color:#3a3a50;margin-left:auto;font-family:var(--mono)}
+.agent-row-toggle{font-size:9px;color:var(--text-dim);margin-left:6px;font-family:var(--mono)}
+.agent-row-body{padding:0 12px;overflow:hidden;max-height:0;transition:max-height .2s ease,padding .2s ease}
+.agent-row-body.open{max-height:400px;padding:6px 12px}
+.agent-row-preview{padding:3px 12px 5px;font-family:var(--mono);font-size:10px;line-height:1.5;color:var(--text-dim);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:pre-wrap;word-break:break-word}
+.agent-row-text{font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-word}
+.agent-row-img{max-width:100%;border:1px solid var(--border);border-radius:4px;margin-top:6px;display:block}
+.event-log-area{border-top:1px solid var(--border);max-height:120px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent;flex-shrink:0}
+.event-log-area .ev{padding:1px 12px;font-family:var(--mono);font-size:10px;line-height:1.6;border-bottom:1px solid #101018;color:var(--text-dim)}
+.event-log-area .ev.ok{color:var(--ok)}
+.event-log-area .ev.warn{color:var(--warn)}
+.event-log-area .ev.error{color:var(--err)}
+.event-log-area .ev time{color:#3a3a50;margin-right:6px}
+#statusbar{position:fixed;bottom:0;left:0;right:0;height:28px;line-height:28px;background:var(--surface);border-top:1px solid var(--border);display:flex;font-size:11px;z-index:100}
+.sb-item{padding:0 14px;border-right:1px solid var(--border);color:var(--text-dim)}
+.sb-item span{color:var(--text-mid)}
+.sb-brand{font-weight:700;color:var(--accent)}
+.sse-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px}
+.sse-dot.live{background:var(--ok)}
+.sse-dot.dead{background:var(--err)}
+</style>
+</head>
+<body>
+<div id="root">
+<div id="pane-canvas">
+<div class="pane-hdr">Annotated View<span class="badge" id="badge-img">--</span><span class="spacer"></span></div>
+<div id="canvas-wrap">
+<div id="canvas-stack">
+<canvas id="c-base"></canvas>
+<canvas id="c-overlay"></canvas>
+</div>
+<div class="canvas-status" id="canvas-status">no frame</div>
+</div>
+</div>
+<div id="gutter"></div>
+<div id="pane-swarm">
+<div class="pane-hdr">
+Swarm Wire
+<button class="hdr-btn" id="btn-save-log">SAVE</button>
+<span class="spacer"></span>
+<span class="badge" id="badge-sse"><span class="sse-dot dead"></span>SSE</span>
+</div>
+<div class="agent-status-bar" id="agent-bar"></div>
+<div class="swarm-rows" id="swarm-rows"></div>
+<div class="event-log-area" id="event-log"></div>
+</div>
+</div>
+<div id="statusbar">
+<div class="sb-item sb-brand">Franz</div>
+<div class="sb-item">seq: <span id="sb-seq">--</span></div>
+<div class="sb-item">cycle: <span id="sb-cycle">0</span></div>
+</div>
+<script type="module">
+'use strict';
+
+const NORM = 1000;
+const MAX_LOG = 200;
+const POLL_MS = 2500;
+
+const rootEl = document.getElementById('root');
+let splitX = parseFloat(localStorage.getItem('fsx2') || '55');
+const applyLayout = () => { rootEl.style.gridTemplateColumns = splitX + '% 5px 1fr'; };
+applyLayout();
+
+document.getElementById('gutter').addEventListener('mousedown', (ev) => {
+    ev.preventDefault();
+    const onMove = (me) => {
+        splitX = Math.max(20, Math.min(80, (me.clientX / innerWidth) * 100));
+        localStorage.setItem('fsx2', splitX);
+        applyLayout();
+        fitCanvas();
+    };
+    const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+});
+
+const cBase = document.getElementById('c-base');
+const cOverlay = document.getElementById('c-overlay');
+const canvasStack = document.getElementById('canvas-stack');
+const canvasWrap = document.getElementById('canvas-wrap');
+const ctxBase = cBase.getContext('2d');
+const ctxOvl = cOverlay.getContext('2d');
+let canvasW = 0, canvasH = 0;
+
+const resizeCanvases = (w, h) => {
+    if (canvasW === w && canvasH === h) return;
+    canvasW = w; canvasH = h;
+    cBase.width = w; cBase.height = h;
+    cOverlay.width = w; cOverlay.height = h;
+};
+
+const fitCanvas = () => {
+    if (!canvasW || !canvasH) return;
+    const wW = canvasWrap.clientWidth - 4;
+    const wH = canvasWrap.clientHeight - 4;
+    const s = Math.min(wW / canvasW, wH / canvasH, 1);
+    const dW = Math.round(canvasW * s);
+    const dH = Math.round(canvasH * s);
+    canvasStack.style.width = dW + 'px';
+    canvasStack.style.height = dH + 'px';
+    cBase.style.width = dW + 'px'; cBase.style.height = dH + 'px';
+    cOverlay.style.width = dW + 'px'; cOverlay.style.height = dH + 'px';
+};
+window.addEventListener('resize', fitCanvas);
+
+const drawOverlay = (ctx, ov, w, h) => {
+    const lx = (v) => (Number(v) || 0) * w / NORM;
+    const ly = (v) => (Number(v) || 0) * h / NORM;
+    const pts = (ov.points || []).map((p) => [lx(p[0]), ly(p[1])]);
+    if (!pts.length) return;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, Number(ov.opacity ?? 1)));
+    if (pts.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        if (ov.closed) ctx.closePath();
+        if (ov.fill) { ctx.fillStyle = ov.fill; ctx.fill(); }
+        if (ov.stroke) {
+            ctx.strokeStyle = ov.stroke;
+            ctx.lineWidth = ov.stroke_width || 1;
+            ctx.setLineDash(ov.dash || []);
+            ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+            ctx.stroke();
+        }
+    }
+    if (ov.label) {
+        const ls = ov.label_style || {};
+        const lp = ov.label_position || (pts.length > 0 ? pts[0] : [0, 0]);
+        const lpx = lx(lp[0]); const lpy = ly(lp[1]);
+        const fs = ls.font_size || 10;
+        const pd = 4;
+        ctx.font = 'bold ' + fs + 'px system-ui,sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.textAlign = ls.align || 'left';
+        if (ls.bg) {
+            const tw = Math.ceil(ctx.measureText(ov.label).width) + pd * 2;
+            const th = fs + pd * 2;
+            let bx = lpx;
+            if (ls.align === 'center') bx = lpx - tw / 2;
+            else if (ls.align === 'right') bx = lpx - tw;
+            bx = Math.max(0, Math.min(w - tw, bx));
+            const by = Math.max(0, Math.min(h - th, lpy));
+            ctx.fillStyle = ls.bg;
+            ctx.globalAlpha = Math.max(0, Math.min(1, Number(ov.opacity ?? 1) * 0.8));
+            ctx.fillRect(bx, by, tw, th);
+            ctx.globalAlpha = Math.max(0, Math.min(1, Number(ov.opacity ?? 1)));
+            ctx.fillStyle = ls.color || '#ffffff';
+            ctx.fillText(ov.label, bx + pd, by + pd);
+        } else {
+            ctx.fillStyle = ls.color || '#ffffff';
+            ctx.fillText(ov.label, lpx, lpy);
+        }
+    }
+    ctx.restore();
+};
+
+const renderOverlays = (list) => {
+    ctxOvl.clearRect(0, 0, canvasW, canvasH);
+    for (const ov of list) drawOverlay(ctxOvl, ov, canvasW, canvasH);
+};
+
+const loadBaseImage = (b64) => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+        resizeCanvases(img.naturalWidth, img.naturalHeight);
+        ctxBase.drawImage(img, 0, 0);
+        fitCanvas();
+        resolve();
+    };
+    img.onerror = reject;
+    img.src = 'data:image/png;base64,' + b64;
+});
+
+const exportAnnotated = async () => {
+    const oc = new OffscreenCanvas(canvasW, canvasH);
+    const octx = oc.getContext('2d');
+    octx.drawImage(cBase, 0, 0);
+    octx.drawImage(cOverlay, 0, 0);
+    const blob = await oc.convertToBlob({type: 'image/png'});
+    const reader = new FileReader();
+    return new Promise((resolve) => {
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.readAsDataURL(blob);
+    });
+};
+
+const eventLogEl = document.getElementById('event-log');
+const uiLog = (text, level = 'info') => {
+    const ev = document.createElement('div');
+    ev.className = 'ev ' + level;
+    const t = document.createElement('time');
+    t.textContent = new Date().toLocaleTimeString('en-GB', {hour12: false});
+    ev.appendChild(t);
+    ev.appendChild(document.createTextNode(text));
+    eventLogEl.prepend(ev);
+    while (eventLogEl.children.length > MAX_LOG) eventLogEl.removeChild(eventLogEl.lastChild);
+};
+
+const agentBar = document.getElementById('agent-bar');
+const agentChips = {};
+
+const upsertChip = (agent, status) => {
+    if (!agentChips[agent]) {
+        const chip = document.createElement('div');
+        chip.className = 'agent-chip';
+        const dot = document.createElement('div');
+        dot.className = 'chip-dot idle';
+        const name = document.createElement('span');
+        name.className = 'chip-name';
+        name.textContent = agent;
+        const st = document.createElement('span');
+        st.className = 'chip-status';
+        st.textContent = 'idle';
+        chip.appendChild(dot); chip.appendChild(name); chip.appendChild(st);
+        agentBar.appendChild(chip);
+        agentChips[agent] = {dot, st};
+    }
+    const c = agentChips[agent];
+    c.dot.className = 'chip-dot ' + (status || 'idle');
+    const labels = {idle: 'Idle', awaiting_vlm: 'Waiting', thinking: 'Thinking', acting: 'Acting', error: 'Error'};
+    c.st.textContent = labels[status] || status || 'Idle';
+};
+
+const swarmRows = document.getElementById('swarm-rows');
+const agentRows = {};
+let cycleCount = 0;
+
+const fmtTime = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    return d.toLocaleTimeString('en-GB', {hour12: false}) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+};
+
+const upsertAgentRow = (agent, direction, text, ts, imgIdx) => {
+    if (!agentRows[agent]) {
+        const row = document.createElement('div');
+        row.className = 'agent-row';
+
+        const hdr = document.createElement('div');
+        hdr.className = 'agent-row-hdr';
+
+        const label = document.createElement('span');
+        label.className = 'agent-label ' + agent;
+        label.textContent = agent;
+
+        const dir = document.createElement('span');
+        dir.className = 'agent-row-dir';
+
+        const tsSpan = document.createElement('span');
+        tsSpan.className = 'agent-row-ts';
+
+        const toggle = document.createElement('span');
+        toggle.className = 'agent-row-toggle';
+        toggle.textContent = '+';
+
+        hdr.appendChild(label);
+        hdr.appendChild(dir);
+        hdr.appendChild(tsSpan);
+        hdr.appendChild(toggle);
+
+        const preview = document.createElement('div');
+        preview.className = 'agent-row-preview';
+
+        const body = document.createElement('div');
+        body.className = 'agent-row-body';
+
+        const textEl = document.createElement('div');
+        textEl.className = 'agent-row-text';
+
+        body.appendChild(textEl);
+        row.appendChild(hdr);
+        row.appendChild(preview);
+        row.appendChild(body);
+        swarmRows.appendChild(row);
+
+        let open = false;
+        hdr.addEventListener('click', () => {
+            open = !open;
+            body.classList.toggle('open', open);
+            toggle.textContent = open ? '-' : '+';
+        });
+
+        agentRows[agent] = {dir, tsSpan, toggle, preview, body, textEl, imgEl: null};
+    }
+
+    const r = agentRows[agent];
+    r.dir.className = 'agent-row-dir ' + (direction || 'output');
+    r.dir.textContent = direction === 'input' ? '-> VLM' : direction === 'error' ? '!! ERR' : '<- VLM';
+    r.tsSpan.textContent = fmtTime(ts);
+    r.preview.textContent = text || '';
+    r.textEl.textContent = text || '';
+
+    if (imgIdx !== undefined && imgIdx !== null) {
+        if (!r.imgEl) {
+            r.imgEl = document.createElement('img');
+            r.imgEl.className = 'agent-row-img';
+            r.body.appendChild(r.imgEl);
+        }
+        r.imgEl.src = '/swarm_image/' + imgIdx;
+    }
+};
+
+let swarmTotal = 0;
+
+const handleSwarmMsg = (msg) => {
+    const idx = msg.idx !== undefined ? msg.idx : swarmTotal;
+    upsertAgentRow(
+        msg.agent,
+        msg.direction,
+        msg.text || '',
+        msg.ts,
+        msg.has_image ? idx : undefined,
+    );
+    swarmTotal = Math.max(swarmTotal, idx + 1);
+    document.getElementById('sb-cycle').textContent = swarmTotal;
+};
+
+document.getElementById('btn-save-log').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-save-log');
+    btn.textContent = 'SAVING...';
+    try {
+        let canvasDataUri = '';
+        if (canvasW > 0 && canvasH > 0) {
+            const oc = new OffscreenCanvas(canvasW, canvasH);
+            const octx = oc.getContext('2d');
+            octx.drawImage(cBase, 0, 0);
+            octx.drawImage(cOverlay, 0, 0);
+            const blob = await oc.convertToBlob({type: 'image/png'});
+            const reader = new FileReader();
+            canvasDataUri = await new Promise(r => { reader.onload = () => r(reader.result); reader.readAsDataURL(blob); });
+        }
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const rows = Array.from(swarmRows.querySelectorAll('.agent-row')).map(row => row.outerHTML).join('\n');
+        const logs = Array.from(eventLogEl.querySelectorAll('.ev')).map(el => '<div class="ev ' + el.className.replace('ev ', '') + '">' + el.innerHTML + '</div>').join('\n');
+        const html = '<!DOCTYPE html>\n<html><head><meta charset="UTF-8"><title>Franz Log ' + ts + '</title></head><body style="background:#0a0a0c;color:#e4e4ec;font-family:system-ui;padding:20px">'
+            + (canvasDataUri ? '<img src="' + canvasDataUri + '" style="max-width:100%"><br>' : '')
+            + '<pre>' + rows + '</pre><hr><pre>' + logs + '</pre></body></html>';
+        const blob = new Blob([html], {type: 'text/html'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'franz-log-' + ts + '.html';
+        a.click();
+        URL.revokeObjectURL(a.href);
+        uiLog('Log saved', 'ok');
+    } catch(e) {
+        uiLog('Save failed: ' + e, 'error');
+    } finally {
+        btn.textContent = 'SAVE';
+    }
+});
+
+let lastPendingSeq = -1;
+let isBusy = false;
+
+const postAnnotated = async (seq, b64) => {
+    try {
+        const resp = await fetch('/annotated', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({seq, image_b64: b64}),
+        });
+        const result = await resp.json();
+        return result.ok;
+    } catch {
+        return false;
+    }
+};
+
+const handleFrame = async (seqNum) => {
+    if (isBusy || seqNum <= lastPendingSeq) return;
+    isBusy = true;
+    lastPendingSeq = seqNum;
+    try {
+        const resp = await fetch('/frame');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.raw_b64 || data.raw_b64.length < 100) return;
+        document.getElementById('badge-img').textContent = 'seq ' + seqNum;
+        document.getElementById('badge-img').className = 'badge warn';
+        await loadBaseImage(data.raw_b64);
+        renderOverlays(data.overlays || []);
+        const annB64 = await exportAnnotated();
+        const ok = await postAnnotated(seqNum, annB64);
+        document.getElementById('badge-img').textContent = ok ? 'seq ' + seqNum + ' ok' : 'seq ' + seqNum + ' fail';
+        document.getElementById('badge-img').className = ok ? 'badge ok' : 'badge err';
+        document.getElementById('canvas-status').textContent = canvasW + 'x' + canvasH;
+    } catch(err) {
+        uiLog('frame err: ' + err, 'error');
+    } finally {
+        isBusy = false;
+    }
+};
+
+document.getElementById('sb-seq').textContent = '--';
+
+const sseDot = document.querySelector('.sse-dot');
+let sseConnected = false;
+let fallbackTimer = null;
+
+const startSSE = () => {
+    const es = new EventSource('/events');
+
+    es.addEventListener('connected', () => {
+        sseConnected = true;
+        sseDot.className = 'sse-dot live';
+        uiLog('SSE connected', 'ok');
+        if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null; }
+    });
+
+    es.addEventListener('state', (e) => {
+        const st = JSON.parse(e.data);
+        document.getElementById('sb-seq').textContent = st.frame_seq || '--';
+        if (st.agents) {
+            for (const [name, info] of Object.entries(st.agents)) {
+                upsertChip(name, info.status || 'idle');
+            }
+        }
+    });
+
+    es.addEventListener('swarm', (e) => {
+        handleSwarmMsg(JSON.parse(e.data));
+    });
+
+    es.addEventListener('frame', (e) => {
+        handleFrame(JSON.parse(e.data).seq);
+    });
+
+    es.addEventListener('agent_status', (e) => {
+        const data = JSON.parse(e.data);
+        upsertChip(data.agent, data.status);
+    });
+
+    es.addEventListener('log', (e) => {
+        const data = JSON.parse(e.data);
+        uiLog(data.text || '', data.level || 'info');
+    });
+
+    es.onerror = () => {
+        if (sseConnected) {
+            sseConnected = false;
+            sseDot.className = 'sse-dot dead';
+            uiLog('SSE lost, polling', 'warn');
+            if (!fallbackTimer) fallbackTimer = setInterval(fallbackPoll, POLL_MS);
+        }
+    };
+};
+
+const fallbackPoll = async () => {
+    try {
+        const resp = await fetch('/state');
+        if (!resp.ok) return;
+        const state = await resp.json();
+        document.getElementById('sb-seq').textContent = state.frame_seq || '--';
+        if (state.agents) {
+            for (const [name, info] of Object.entries(state.agents)) upsertChip(name, info.status || 'idle');
+        }
+        if (state.ann_pending_seq > lastPendingSeq) await handleFrame(state.ann_pending_seq);
+        if ((state.swarm_count || 0) > swarmTotal) {
+            const sw = await fetch('/swarm?after=' + swarmTotal);
+            if (sw.ok) {
+                const sd = await sw.json();
+                if (sd.messages) for (const msg of sd.messages) handleSwarmMsg(msg);
+            }
+        }
+    } catch {}
+};
+
+uiLog('Franz panel starting');
+fallbackTimer = setInterval(fallbackPoll, POLL_MS);
+startSSE();
+</script>
+</body>
+</html>
