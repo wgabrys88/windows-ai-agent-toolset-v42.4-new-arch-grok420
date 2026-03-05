@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Franz - Architecture Analysis</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+--bg:#0a0a0c;--surface:#121218;--surface2:#18181f;--border:#252530;
+--accent:#4a9eff;--text:#e4e4ec;--text-dim:#55556a;--text-mid:#8e8ea8;
+--ok:#3ecf8e;--warn:#f0a000;--err:#ff4455;--mono:"Cascadia Code","Fira Code","Consolas",monospace
+}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.6;padding:40px;max-width:1000px;margin:0 auto}
+h1{font-size:22px;color:var(--accent);margin-bottom:6px}
+.subtitle{color:var(--text-dim);font-size:12px;margin-bottom:36px;font-family:var(--mono)}
+h2{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim);margin:40px 0 16px}
+.issue{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--err);border-radius:8px;margin-bottom:16px;overflow:hidden}
+.issue-hdr{display:flex;align-items:baseline;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)}
+.issue-num{font-size:11px;font-weight:700;font-family:var(--mono);color:var(--text-dim);flex-shrink:0}
+.issue-title{font-weight:600;color:var(--text);font-size:13px}
+.issue-file{margin-left:auto;font-size:10px;font-family:var(--mono);padding:2px 8px;border-radius:4px;background:var(--surface2);color:var(--text-mid);flex-shrink:0}
+.issue-body{padding:12px 16px;color:var(--text-mid);font-size:13px}
+.issue-body p{margin-bottom:10px}
+.issue-body p:last-child{margin-bottom:0}
+pre{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:12px 14px;font-family:var(--mono);font-size:11px;line-height:1.6;overflow-x:auto;margin:10px 0;color:#c8c8d8}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+th{text-align:left;padding:8px 12px;background:var(--surface);color:var(--text-dim);font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:10px;border-bottom:2px solid var(--border)}
+td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text-mid);vertical-align:top}
+td:first-child{font-family:var(--mono);color:var(--text-dim);font-size:11px}
+td:nth-child(2){color:var(--accent);font-family:var(--mono);font-size:11px}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--surface)}
+</style>
+</head>
+<body>
+
+<h1>Franz - Logical Architecture Analysis</h1>
+<div class="subtitle">Violations of the "Python is pure plumbing" rule -- places where Python makes decisions, substitutes data, or silently recovers instead of surfacing failures to the swarm</div>
+
+<h2>Issues</h2>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#1</span>
+    <span class="issue-title">JSON parse fallback silently swallows Grok's failure</span>
+    <span class="issue-file">brain_agentic.py</span>
+  </div>
+  <div class="issue-body">
+    <p>Python substitutes <code>{}</code> when Grok produces malformed JSON. A failed or hallucinated Grok response silently becomes "no actions, no progress, no completion" and the loop continues as if Grok decided to do nothing. The swarm never knows this happened. The raw string should be fed back into the swarm as an error signal so agents can self-correct.</p>
+    <pre>except (json.JSONDecodeError, ValueError):
+    hub.log_event("Captain JSON parse failed", "warn")
+    decision = {}  # Python invents a decision</pre>
+  </div>
+</div>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#2</span>
+    <span class="issue-title">Python decides phase transition from action list length</span>
+    <span class="issue-file">brain_agentic.py</span>
+  </div>
+  <div class="issue-body">
+    <p>Python is making a phase transition decision based on whether the actions list is empty. This is intelligence. The swarm should own phase state entirely. Grok must explicitly set the phase in its JSON output and Python must write it verbatim.</p>
+    <pre>state["phase"] = "EXECUTE" if actions else "EVALUATE"  # Python deciding phase</pre>
+  </div>
+</div>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#3</span>
+    <span class="issue-title">_dispatch_action provides default coordinate fallbacks</span>
+    <span class="issue-file">brain_agentic.py</span>
+  </div>
+  <div class="issue-body">
+    <p>If Grok omits <code>x</code>/<code>y</code> from a click, Python silently clicks <code>500,500</code> (screen center). If Grok omits drag coords, Python silently drags <code>400,400 -&gt; 600,600</code>. These are invented actions the swarm never decided. A missing coordinate should be a hard failure surfaced back to the swarm, not silently corrected.</p>
+    <pre>x = int(action.get("x", 500))   # invented coordinate
+y = int(action.get("y", 500))   # invented coordinate
+int(action.get("x1", 400)), int(action.get("y1", 400)),  # invented drag start
+int(action.get("x2", 600)), int(action.get("y2", 600)),  # invented drag end</pre>
+  </div>
+</div>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#4</span>
+    <span class="issue-title">press_key default fallback invents a key</span>
+    <span class="issue-file">brain_agentic.py</span>
+  </div>
+  <div class="issue-body">
+    <p>If Grok omits the <code>key</code> field, Python presses <code>enter</code>. This is Python executing an action the swarm never chose.</p>
+    <pre>hub.actions(hub.press_key(str(action.get("key", "enter"))))  # Python invents "enter"</pre>
+  </div>
+</div>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#5</span>
+    <span class="issue-title">hotkey silently normalizes list to string</span>
+    <span class="issue-file">brain_agentic.py</span>
+  </div>
+  <div class="issue-body">
+    <p>Python is correcting a malformed Grok output (list instead of string). This masks a model compliance failure. The swarm should see the error and self-correct on the next cycle, not have Python silently fix it.</p>
+    <pre>keys = action.get("keys", "")
+if isinstance(keys, list):
+    keys = "+".join(keys)  # Python silently fixes malformed Grok output</pre>
+  </div>
+</div>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#6</span>
+    <span class="issue-title">observation contains no actual screen data</span>
+    <span class="issue-file">brain_agentic.py</span>
+  </div>
+  <div class="issue-body">
+    <p>The variable is named <code>observation</code> and passed to all 5 agents as <code>{observation}</code> in their system prompts -- but it contains zero visual information. The actual annotated frame (<code>frame_b64</code>) is only sent to Grok. The 5 debate agents are reasoning about the screen without seeing it. For a 2B VLM this is especially critical: agents are hallucinating screen state from text alone. The frame should be included in agent messages or the observation string must contain real screen description.</p>
+    <pre>observation = f"Phase={state['phase']} Progress={state['progress']}% Goal={state['goal']}"
+# No image. No screen content. Agents reason blind.</pre>
+  </div>
+</div>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#7</span>
+    <span class="issue-title">history is only updated on goal completion, never during failure</span>
+    <span class="issue-file">brain_agentic.py</span>
+  </div>
+  <div class="issue-body">
+    <p>On every failed or partial cycle, <code>history</code> stays as <code>"Starting."</code> or the last completion string. Agents receive stale history with no record of what was tried, what failed, or how many cycles have passed. For a 2B model this is fatal -- it has no episodic memory to reason from and will repeat the same actions indefinitely.</p>
+    <pre>if is_complete and next_goal:
+    state["history"] = f"Completed: {state['goal']}. Now: {next_goal}"
+# On every other cycle: history is never updated. Agents are blind to failures.</pre>
+  </div>
+</div>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#8</span>
+    <span class="issue-title">max_tokens=512 for debate agents causes silent truncation</span>
+    <span class="issue-file">brain_agentic.py</span>
+  </div>
+  <div class="issue-body">
+    <p>Each of the 5 agents gets 512 tokens max. For a 2B model that needs to reason about a screen, plan actions, and write a useful debate contribution, 512 tokens will produce truncated or incomplete responses. Grok then synthesizes truncated inputs. The captain gets 800 tokens which is also tight for producing valid JSON plus reasoning. Truncation causes silent partial output with no error signal to the swarm.</p>
+    <pre>result = await hub.call_vlm_agent(messages, temperature=0.5, max_tokens=512, ...)
+# 512 tokens is insufficient for screen reasoning + action planning on a 2B model</pre>
+  </div>
+</div>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#9</span>
+    <span class="issue-title">Annotation timeout substitutes raw frame as annotated</span>
+    <span class="issue-file">franz_hub.py</span>
+  </div>
+  <div class="issue-body">
+    <p>When the panel fails to annotate in time, Python silently substitutes the raw unannotated frame as if it were annotated. The brain receives it via <code>get_frame()</code> with no indication it is raw. Overlays drawn by the brain are lost. The swarm cannot know the frame it received has no overlays on it.</p>
+    <pre>except asyncio.TimeoutError:
+    log_event("Annotation timeout, using raw frame", "warn")
+    _ann_result_b64 = raw  # Python substitutes raw as annotated -- swarm cannot tell</pre>
+  </div>
+</div>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#10</span>
+    <span class="issue-title">_subprocess_cursor_pos returns 500,500 on failure</span>
+    <span class="issue-file">franz_hub.py</span>
+  </div>
+  <div class="issue-body">
+    <p>A cursor position failure silently places the cursor overlay at screen center. The swarm sees a cursor at <code>500,500</code> that does not reflect reality. This is a fabricated data point injected into the visual context the agents reason from.</p>
+    <pre>if proc.returncode != 0 or not proc.stdout:
+    return 500, 500  # fabricated cursor position injected into agent visual context
+if len(parts) != 2:
+    return 500, 500  # same</pre>
+  </div>
+</div>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#11</span>
+    <span class="issue-title">VLM exception handler returns empty string, loop continues silently</span>
+    <span class="issue-file">franz_hub.py</span>
+  </div>
+  <div class="issue-body">
+    <p>A VLM network error, timeout, or server error returns an empty string to the brain. In <code>_call_agent</code> this becomes the agent's debate contribution. In the captain path, <code>raw</code> is <code>""</code> which causes the JSON parse to produce <code>{}</code> (issue 1). The swarm loop continues with a completely empty decision. There is no mechanism for the swarm to know the VLM was unreachable.</p>
+    <pre>except Exception as exc:
+    log_event(f"VLM error: {exc}", "error")
+    return ""  # empty string propagates silently through the entire swarm cycle</pre>
+  </div>
+</div>
+
+<div class="issue">
+  <div class="issue-hdr">
+    <span class="issue-num">#12</span>
+    <span class="issue-title">_clamp silently corrects out-of-range coordinates</span>
+    <span class="issue-file">franz_hub.py</span>
+  </div>
+  <div class="issue-body">
+    <p>Applied in <code>click</code>, <code>double_click</code>, <code>right_click</code>, <code>scroll_up</code>, <code>scroll_down</code>, <code>drag</code>. If Grok outputs <code>x=1500</code> (hallucination or off-by-one), Python silently clamps it to <code>1000</code>. The action executes at the wrong location with no error signal to the swarm.</p>
+    <pre>def _clamp(value: int) -> int:
+    return max(0, min(NORM, value))  # silently corrects hallucinated coordinates</pre>
+  </div>
+</div>
+
+<h2>Summary</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>File</th>
+      <th>Location</th>
+      <th>Violation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td>brain</td><td>JSON parse except block</td><td>Python substitutes {} for bad Grok output</td></tr>
+    <tr><td>2</td><td>brain</td><td>phase transition</td><td>Python decides phase from action list length</td></tr>
+    <tr><td>3</td><td>brain</td><td>_dispatch_action x/y defaults</td><td>Python invents coordinates 500,500 / 400,400</td></tr>
+    <tr><td>4</td><td>brain</td><td>press_key default</td><td>Python invents key "enter"</td></tr>
+    <tr><td>5</td><td>brain</td><td>hotkey list normalization</td><td>Python silently fixes malformed Grok output</td></tr>
+    <tr><td>6</td><td>brain</td><td>observation string</td><td>Agents receive no actual screen data</td></tr>
+    <tr><td>7</td><td>brain</td><td>history update</td><td>History never records failures, agents are blind</td></tr>
+    <tr><td>8</td><td>brain</td><td>max_tokens=512</td><td>Truncation causes silent partial agent output</td></tr>
+    <tr><td>9</td><td>hub</td><td>annotation timeout</td><td>Python substitutes raw frame as annotated</td></tr>
+    <tr><td>10</td><td>hub</td><td>cursor pos failure</td><td>Python fabricates cursor position 500,500</td></tr>
+    <tr><td>11</td><td>hub</td><td>VLM exception handler</td><td>VLM failure returns "", loop continues silently</td></tr>
+    <tr><td>12</td><td>hub</td><td>_clamp in helpers</td><td>Python silently corrects out-of-range coordinates</td></tr>
+  </tbody>
+</table>
+
+</body>
+</html>
