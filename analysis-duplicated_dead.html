@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Franz - Duplication and Dead Code Analysis</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+--bg:#0a0a0c;--surface:#121218;--surface2:#18181f;--border:#252530;
+--accent:#4a9eff;--text:#e4e4ec;--text-dim:#55556a;--text-mid:#8e8ea8;
+--ok:#3ecf8e;--warn:#f0a000;--err:#ff4455;--mono:"Cascadia Code","Fira Code","Consolas",monospace
+}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.6;padding:40px;max-width:1060px;margin:0 auto}
+h1{font-size:22px;color:var(--accent);margin-bottom:6px}
+.subtitle{color:var(--text-dim);font-size:12px;margin-bottom:36px;font-family:var(--mono)}
+h2{font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--text-dim);margin:44px 0 14px;border-bottom:1px solid var(--border);padding-bottom:6px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:14px;overflow:hidden}
+.card.dup{border-left:3px solid var(--warn)}
+.card.dead{border-left:3px solid var(--err)}
+.card.merge{border-left:3px solid var(--accent)}
+.card-hdr{display:flex;align-items:baseline;gap:10px;padding:11px 16px;border-bottom:1px solid var(--border)}
+.card-num{font-size:11px;font-weight:700;font-family:var(--mono);color:var(--text-dim);flex-shrink:0}
+.card-title{font-weight:600;color:var(--text);font-size:13px;flex:1}
+.tag{font-size:10px;font-family:var(--mono);padding:2px 8px;border-radius:4px;background:var(--surface2);color:var(--text-mid);flex-shrink:0;white-space:nowrap}
+.tag.warn{background:#3d2e00;color:var(--warn)}
+.tag.err{background:#3d0a10;color:var(--err)}
+.tag.accent{background:#0d2040;color:var(--accent)}
+.card-body{padding:12px 16px;color:var(--text-mid);font-size:13px}
+.card-body p{margin-bottom:9px}
+.card-body p:last-child{margin-bottom:0}
+pre{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:11px 14px;font-family:var(--mono);font-size:11px;line-height:1.6;overflow-x:auto;margin:9px 0;color:#c8c8d8}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+th{text-align:left;padding:7px 12px;background:var(--surface);color:var(--text-dim);font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:10px;border-bottom:2px solid var(--border)}
+td{padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text-mid);vertical-align:top}
+td:first-child{font-family:var(--mono);color:var(--text-dim);font-size:11px;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--surface)}
+</style>
+</head>
+<body>
+<h1>Franz - Duplication and Dead Code Analysis</h1>
+<div class="subtitle">Cross-file audit: exact duplicates, structural duplicates, dead code, and merge candidates</div>
+
+<h2>Exact Duplicates</h2>
+
+<div class="card dup">
+  <div class="card-hdr">
+    <span class="card-num">#1</span>
+    <span class="card-title">NORM = 1000 defined in three files independently</span>
+    <span class="tag warn">3 files</span>
+  </div>
+  <div class="card-body">
+    <p>The constant NORM = 1000 is declared at module level in franz_hub.py, win32.py, and as const NORM = 1000 in panel.html. All three refer to the same coordinate space contract. There is no single source of truth.</p>
+    <pre>franz_hub.py:  NORM: int = 1000
+win32.py:      NORM: int = 1000
+panel.html:    const NORM = 1000;</pre>
+  </div>
+</div>
+
+<div class="card dup">
+  <div class="card-hdr">
+    <span class="card-num">#2</span>
+    <span class="card-title">_clamp / _clamp_norm are identical functions in two files</span>
+    <span class="tag warn">franz_hub.py + win32.py</span>
+  </div>
+  <div class="card-body">
+    <p>_clamp in franz_hub.py and _clamp_norm in win32.py are logically identical. Both do max(0, min(NORM, value)). They exist separately because win32.py is a subprocess and cannot import from franz_hub.py, but they are a maintenance risk if NORM ever changes.</p>
+    <pre>franz_hub.py:  def _clamp(value: int) -> int:
+                   return max(0, min(NORM, value))
+
+win32.py:      def _clamp_norm(value: int) -> int:
+                   return max(0, min(NORM, value))</pre>
+  </div>
+</div>
+
+<div class="card dup">
+  <div class="card-hdr">
+    <span class="card-num">#3</span>
+    <span class="card-title">Action type enumeration repeated four times across the codebase</span>
+    <span class="tag warn">brain + hub + win32 + panel</span>
+  </div>
+  <div class="card-body">
+    <p>The full set of action names (click, double_click, right_click, type_text, press_key, hotkey, scroll_up, scroll_down, drag, wait) is enumerated in four separate places. Any new action type requires changes in all four.</p>
+    <pre>brain_agentic.py  _CAPTAIN_SYSTEM:   lists all 10 action types in JSON example
+brain_agentic.py  _dispatch_action:  match act: case "click" ... case "drag"
+franz_hub.py      _execute_action:   match action_type: case "click" ... case "drag"
+win32.py          main():            match command: case "click" ... case "drag"</pre>
+  </div>
+</div>
+
+<div class="card dup">
+  <div class="card-hdr">
+    <span class="card-num">#4</span>
+    <span class="card-title">OffscreenCanvas merge pattern written twice in panel.html</span>
+    <span class="tag warn">panel.html x2</span>
+  </div>
+  <div class="card-body">
+    <p>The pattern of creating an OffscreenCanvas, drawing cBase then cOverlay onto it, and converting to a blob is written twice: once in exportAnnotated() and again inline inside the btn-save-log click handler. The save handler does not call exportAnnotated() even though it exists and does exactly the same thing.</p>
+    <pre>// exportAnnotated() -- used by handleFrame
+const oc = new OffscreenCanvas(canvasW, canvasH);
+const octx = oc.getContext('2d');
+octx.drawImage(cBase, 0, 0);
+octx.drawImage(cOverlay, 0, 0);
+const blob = await oc.convertToBlob({type: 'image/png'});
+
+// btn-save-log handler -- identical block, not reusing exportAnnotated()
+const oc = new OffscreenCanvas(canvasW, canvasH);
+const octx = oc.getContext('2d');
+octx.drawImage(cBase, 0, 0);
+octx.drawImage(cOverlay, 0, 0);
+const blob = await oc.convertToBlob({type: 'image/png'});</pre>
+  </div>
+</div>
+
+<div class="card dup">
+  <div class="card-hdr">
+    <span class="card-num">#5</span>
+    <span class="card-title">document.getElementById('badge-img') queried three times inside handleFrame</span>
+    <span class="tag warn">panel.html</span>
+  </div>
+  <div class="card-body">
+    <p>The element badge-img is looked up via getElementById three separate times inside handleFrame with no caching. All other top-level elements are cached at module init. This element should be too.</p>
+    <pre>document.getElementById('badge-img').textContent = 'seq ' + seqNum;
+document.getElementById('badge-img').className = 'badge warn';
+// ... later ...
+document.getElementById('badge-img').textContent = ok ? 'seq ' + seqNum + ' ok' : ...;
+document.getElementById('badge-img').className = ok ? 'badge ok' : 'badge err';</pre>
+  </div>
+</div>
+
+<div class="card dup">
+  <div class="card-hdr">
+    <span class="card-num">#6</span>
+    <span class="card-title">VLM call body duplicated between call_vlm_orchestrator and call_vlm_agent</span>
+    <span class="tag warn">franz_hub.py x2</span>
+  </div>
+  <div class="card-body">
+    <p>Both functions contain the same pattern: set status, acquire semaphore, sleep delay, call _do_vlm_call, set status idle, return result. The only structural difference is which semaphore is acquired and the pre-acquire status label. The shared body is ~8 lines duplicated verbatim.</p>
+    <pre>call_vlm_orchestrator:
+    set_agent_status(agent_name, "thinking")
+    async with _vlm_orchestrator_semaphore:
+        if delay > 0: await asyncio.sleep(delay)
+        result = await _do_vlm_call(...)
+        set_agent_status(agent_name, "idle")
+        return result
+
+call_vlm_agent:
+    set_agent_status(agent_name, "awaiting_vlm")
+    async with _vlm_agent_semaphore:
+        set_agent_status(agent_name, "thinking")
+        if delay > 0: await asyncio.sleep(delay)
+        result = await _do_vlm_call(...)
+        set_agent_status(agent_name, "idle")
+        return result</pre>
+  </div>
+</div>
+
+<div class="card dup">
+  <div class="card-hdr">
+    <span class="card-num">#7</span>
+    <span class="card-title">upsertChip called from three separate paths doing the same agent state update</span>
+    <span class="tag warn">panel.html</span>
+  </div>
+  <div class="card-body">
+    <p>upsertChip(name, info.status) is called from the SSE state handler, the SSE agent_status handler, and fallbackPoll. All three paths iterate agent entries and call upsertChip. The state and agent_status events carry overlapping data specifically because there is no single agent-state update path in the panel.</p>
+    <pre>// SSE 'state' handler
+for (const [name, info] of Object.entries(st.agents)) upsertChip(name, info.status);
+
+// SSE 'agent_status' handler
+upsertChip(data.agent, data.status);
+
+// fallbackPoll
+for (const [name, info] of Object.entries(state.agents)) upsertChip(name, info.status);</pre>
+  </div>
+</div>
+
+<div class="card dup">
+  <div class="card-hdr">
+    <span class="card-num">#8</span>
+    <span class="card-title">_do_click, _do_double_click, _do_right_click share identical setup in win32.py</span>
+    <span class="tag warn">win32.py x3</span>
+  </div>
+  <div class="card-body">
+    <p>All three click functions begin with the same three lines: parse pos, resolve screen pos, move cursor, settle delay. Only the mouse_event flags differ. The shared preamble is copy-pasted three times.</p>
+    <pre>norm_x, norm_y = _parse_pos(pos_str)
+pixel_x, pixel_y = _resolve_screen_pos(norm_x, norm_y, region_str)
+_move_cursor(pixel_x, pixel_y)
+time.sleep(CONFIG.click_settle_delay)
+-- repeated verbatim in _do_click, _do_double_click, _do_right_click</pre>
+  </div>
+</div>
+
+<h2>Dead Code</h2>
+
+<div class="card dead">
+  <div class="card-hdr">
+    <span class="card-num">#9</span>
+    <span class="card-title">route_action_string() is never called anywhere</span>
+    <span class="tag err">franz_hub.py</span>
+  </div>
+  <div class="card-body">
+    <p>franz_hub.py exports route_action_string() with a full docstring describing a PARSER agent workflow. No brain, no test, no caller anywhere in the codebase invokes it. brain_agentic.py uses JSON dispatch via _dispatch_action instead. The function is ~40 lines of dead code including the special _special keys for wait, done, and abandon which are also never consumed.</p>
+    <pre>def route_action_string(action_str: str) -> dict[str, Any] | None:
+    # 40 lines -- never called by any brain or hub code</pre>
+  </div>
+</div>
+
+<div class="card dead">
+  <div class="card-hdr">
+    <span class="card-num">#10</span>
+    <span class="card-title">get_agent_semaphore() is never called anywhere</span>
+    <span class="tag err">franz_hub.py</span>
+  </div>
+  <div class="card-body">
+    <p>franz_hub.py exports get_agent_semaphore() which returns _agent_semaphore. No brain or external code calls it. The semaphore is used internally by the hub only. This is a public API with zero consumers.</p>
+    <pre>def get_agent_semaphore() -> asyncio.Semaphore | None:
+    return _agent_semaphore  # never called</pre>
+  </div>
+</div>
+
+<div class="card dead">
+  <div class="card-hdr">
+    <span class="card-num">#11</span>
+    <span class="card-title">dot(), box(), line() overlay helpers are never called by brain_agentic.py</span>
+    <span class="tag err">franz_hub.py</span>
+  </div>
+  <div class="card-body">
+    <p>franz_hub.py exports three overlay helper functions: dot(), box(), and line(). brain_agentic.py constructs all its overlay dicts manually as raw dict literals inside _make_progress_overlay(). None of the three helpers are ever called. They are public API with zero consumers in the current brain.</p>
+    <pre>def dot(x, y, label, color): ...   # never called
+def box(x1, y1, x2, y2, ...): ...  # never called
+def line(points, label, color): ... # never called</pre>
+  </div>
+</div>
+
+<div class="card dead">
+  <div class="card-hdr">
+    <span class="card-num">#12</span>
+    <span class="card-title">cycleCount variable declared but never incremented or read in panel.html</span>
+    <span class="tag err">panel.html</span>
+  </div>
+  <div class="card-body">
+    <p>let cycleCount = 0 is declared at module scope in panel.html. It is never incremented and never read. The status bar cycle counter uses swarmTotal instead. cycleCount is pure dead variable.</p>
+    <pre>let cycleCount = 0;  // never read, never written after declaration</pre>
+  </div>
+</div>
+
+<div class="card dead">
+  <div class="card-hdr">
+    <span class="card-num">#13</span>
+    <span class="card-title">BOARD_PATH references hub_board.html which does not exist in the project</span>
+    <span class="tag err">franz_hub.py</span>
+  </div>
+  <div class="card-body">
+    <p>franz_hub.py defines BOARD_PATH = HERE / "hub_board.html" and serves it at GET /board. The file hub_board.html does not exist in the project directory. Any request to /board will raise a FileNotFoundError at BOARD_PATH.read_bytes(). The route and the path constant are dead infrastructure pointing at a missing file.</p>
+    <pre>BOARD_PATH: Path = HERE / "hub_board.html"  # file does not exist
+case "/board":
+    self._send_file(200, BOARD_PATH.read_bytes(), ...)  # will crash</pre>
+  </div>
+</div>
+
+<div class="card dead">
+  <div class="card-hdr">
+    <span class="card-num">#14</span>
+    <span class="card-title">html_to_b64.py is a standalone utility with no integration into the system</span>
+    <span class="tag err">html_to_b64.py</span>
+  </div>
+  <div class="card-body">
+    <p>html_to_b64.py is a one-off script that base64-encodes HTML files in the current directory. Nothing in franz_hub.py, brain_agentic.py, or panel.html calls it, imports it, or depends on its output. It is a dead utility file left in the project root.</p>
+  </div>
+</div>
+
+<div class="card dead">
+  <div class="card-hdr">
+    <span class="card-num">#15</span>
+    <span class="card-title">_radius CSS variable declared but never used in panel.html</span>
+    <span class="tag err">panel.html</span>
+  </div>
+  <div class="card-body">
+    <p>The CSS custom property --radius: 10px is declared in :root but no CSS rule in the file references var(--radius). It is a dead variable in the stylesheet.</p>
+    <pre>:root { --radius: 10px }  /* never referenced by any rule */</pre>
+  </div>
+</div>
+
+<div class="card dead">
+  <div class="card-hdr">
+    <span class="card-num">#16</span>
+    <span class="card-title">--split-x CSS variable in :root is immediately overridden by JS and never used as a fallback</span>
+    <span class="tag err">panel.html</span>
+  </div>
+  <div class="card-body">
+    <p>--split-x: 55% is set in :root and used in the grid-template-columns rule. However JS calls applyLayout() synchronously on load which overwrites it via rootEl.style.gridTemplateColumns before any paint. The CSS variable value is never actually rendered. The :root declaration is dead on every load where JS runs (which is always, given Chrome-only target).</p>
+    <pre>:root { --split-x: 55% }  /* overwritten by JS before first paint */
+#root { grid-template-columns: var(--split-x) 5px 1fr }  /* JS sets inline style instead */</pre>
+  </div>
+</div>
+
+<h2>Merge Candidates</h2>
+
+<div class="card merge">
+  <div class="card-hdr">
+    <span class="card-num">#17</span>
+    <span class="card-title">_dispatch_action in brain and _execute_action in hub are two halves of one pipeline</span>
+    <span class="tag accent">brain + hub</span>
+  </div>
+  <div class="card-body">
+    <p>_dispatch_action in brain_agentic.py translates Grok JSON fields into hub action dicts. _execute_action in franz_hub.py translates hub action dicts into win32.py subprocess commands. Both are match blocks over the same 9 action types. The brain layer adds zero value here -- it is pure mechanical translation from one dict schema to another. The hub could accept the Grok JSON fields directly, eliminating _dispatch_action entirely and one full layer of translation.</p>
+    <pre>Grok JSON -> _dispatch_action (brain) -> hub action dict -> _execute_action (hub) -> win32 args
+                    ^--- this layer is pure schema translation, no intelligence</pre>
+  </div>
+</div>
+
+<div class="card merge">
+  <div class="card-hdr">
+    <span class="card-num">#18</span>
+    <span class="card-title">call_vlm_orchestrator and call_vlm_agent can be unified with a semaphore parameter</span>
+    <span class="tag accent">franz_hub.py</span>
+  </div>
+  <div class="card-body">
+    <p>The two VLM call functions are structurally identical except for which semaphore they acquire and whether they set awaiting_vlm before acquiring. A single internal _call_vlm(semaphore, pre_status, messages, ...) would replace both, with the two public functions becoming one-line wrappers. This removes ~20 lines of duplicated logic.</p>
+    <pre>async def _call_vlm(sem, pre_status, messages, temperature, max_tokens, agent_name):
+    if agent_name and pre_status: set_agent_status(agent_name, pre_status)
+    async with sem:
+        if agent_name: set_agent_status(agent_name, "thinking")
+        if delay > 0: await asyncio.sleep(delay)
+        result = await _do_vlm_call(messages, temperature, max_tokens)
+        if agent_name: set_agent_status(agent_name, "idle")
+        return result</pre>
+  </div>
+</div>
+
+<div class="card merge">
+  <div class="card-hdr">
+    <span class="card-num">#19</span>
+    <span class="card-title">_do_click, _do_double_click, _do_right_click share extractable preamble</span>
+    <span class="tag accent">win32.py</span>
+  </div>
+  <div class="card-body">
+    <p>All three click functions share the same 4-line preamble: parse pos, resolve screen pos, move cursor, settle delay. Extracting a _move_to(pos_str, region_str) helper that returns nothing and performs the move+settle would remove 12 lines of duplication and make the intent of each function clearer.</p>
+    <pre>def _move_to(pos_str: str, region_str: str) -> None:
+    nx, ny = _parse_pos(pos_str)
+    px, py = _resolve_screen_pos(nx, ny, region_str)
+    _move_cursor(px, py)
+    time.sleep(CONFIG.click_settle_delay)
+
+def _do_click(pos_str, region_str):
+    _move_to(pos_str, region_str)
+    _mouse_event(LEFT_DOWN); time.sleep(...); _mouse_event(LEFT_UP)</pre>
+  </div>
+</div>
+
+<div class="card merge">
+  <div class="card-hdr">
+    <span class="card-num">#20</span>
+    <span class="card-title">Agent system prompts share a common header that is copy-pasted five times</span>
+    <span class="tag accent">brain_agentic.py</span>
+  </div>
+  <div class="card-body">
+    <p>Every agent system prompt begins with the same three lines: "You are {name}, {role} specialist in a computer-use AI swarm. / Current goal: {goal} / Phase: {phase}". These are copy-pasted into all five prompt strings. A shared header template with per-agent role injection would reduce the prompt definitions and make global prompt changes a single edit.</p>
+    <pre>_HEADER = """
+You are {name}, {role} specialist in a computer-use AI swarm.
+Current goal: {goal}
+Phase: {phase}
+"""
+-- currently copy-pasted verbatim into all 5 agent prompt strings</pre>
+  </div>
+</div>
+
+<div class="card merge">
+  <div class="card-hdr">
+    <span class="card-num">#21</span>
+    <span class="card-title">SSE state and agent_status events carry overlapping agent data to the panel</span>
+    <span class="tag accent">franz_hub.py + panel.html</span>
+  </div>
+  <div class="card-body">
+    <p>The hub publishes a full agents dict inside every state event AND a separate agent_status event on every individual status change. The panel handles both. The state event already contains all agent statuses, making agent_status redundant for the panel's chip display. Either the panel should rely only on agent_status events (removing the agents loop from the state handler), or state should drop the agents field and the panel should rely solely on agent_status. Currently both paths run and both call upsertChip, doing the same DOM update twice per status change.</p>
+  </div>
+</div>
+
+<h2>Summary</h2>
+
+<table>
+  <thead>
+    <tr><th>#</th><th>Type</th><th>Location</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td>Duplicate</td><td>hub + win32 + panel</td><td>NORM = 1000 defined three times</td></tr>
+    <tr><td>2</td><td>Duplicate</td><td>hub + win32</td><td>_clamp and _clamp_norm are identical</td></tr>
+    <tr><td>3</td><td>Duplicate</td><td>brain + hub + win32 + panel</td><td>Action type list enumerated four times</td></tr>
+    <tr><td>4</td><td>Duplicate</td><td>panel.html x2</td><td>OffscreenCanvas merge block written twice</td></tr>
+    <tr><td>5</td><td>Duplicate</td><td>panel.html</td><td>getElementById('badge-img') called 3x uncached</td></tr>
+    <tr><td>6</td><td>Duplicate</td><td>franz_hub.py x2</td><td>VLM call body duplicated in two functions</td></tr>
+    <tr><td>7</td><td>Duplicate</td><td>panel.html x3</td><td>upsertChip called from three separate paths</td></tr>
+    <tr><td>8</td><td>Duplicate</td><td>win32.py x3</td><td>Click preamble copy-pasted three times</td></tr>
+    <tr><td>9</td><td>Dead code</td><td>franz_hub.py</td><td>route_action_string() never called</td></tr>
+    <tr><td>10</td><td>Dead code</td><td>franz_hub.py</td><td>get_agent_semaphore() never called</td></tr>
+    <tr><td>11</td><td>Dead code</td><td>franz_hub.py</td><td>dot(), box(), line() never called by brain</td></tr>
+    <tr><td>12</td><td>Dead code</td><td>panel.html</td><td>cycleCount variable never used</td></tr>
+    <tr><td>13</td><td>Dead code</td><td>franz_hub.py</td><td>BOARD_PATH + /board route, file missing</td></tr>
+    <tr><td>14</td><td>Dead code</td><td>html_to_b64.py</td><td>Standalone utility, no system integration</td></tr>
+    <tr><td>15</td><td>Dead code</td><td>panel.html CSS</td><td>--radius variable declared, never used</td></tr>
+    <tr><td>16</td><td>Dead code</td><td>panel.html CSS</td><td>--split-x in :root overwritten by JS before paint</td></tr>
+    <tr><td>17</td><td>Merge</td><td>brain + hub</td><td>_dispatch_action is redundant schema translation</td></tr>
+    <tr><td>18</td><td>Merge</td><td>franz_hub.py</td><td>Two VLM functions unifiable with semaphore param</td></tr>
+    <tr><td>19</td><td>Merge</td><td>win32.py</td><td>Click preamble extractable into _move_to helper</td></tr>
+    <tr><td>20</td><td>Merge</td><td>brain_agentic.py</td><td>Agent prompt header copy-pasted five times</td></tr>
+    <tr><td>21</td><td>Merge</td><td>hub + panel</td><td>state and agent_status events carry overlapping data</td></tr>
+  </tbody>
+</table>
+
+</body>
+</html>
