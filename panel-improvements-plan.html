@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Franz Panel - Improvement Plan</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+--bg:#0a0a0c;--surface:#121218;--surface2:#18181f;--border:#252530;
+--accent:#4a9eff;--text:#e4e4ec;--text-dim:#55556a;--text-mid:#8e8ea8;
+--ok:#3ecf8e;--warn:#f0a000;--err:#ff4455;--mono:"Cascadia Code","Fira Code","Consolas",monospace
+}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.6;padding:40px;max-width:1060px;margin:0 auto}
+h1{font-size:22px;color:var(--accent);margin-bottom:6px}
+.subtitle{color:var(--text-dim);font-size:12px;margin-bottom:36px;font-family:var(--mono)}
+h2{font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--text-dim);margin:44px 0 14px;border-bottom:1px solid var(--border);padding-bottom:6px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:14px;overflow:hidden}
+.card.bug{border-left:3px solid var(--err)}
+.card.ux{border-left:3px solid var(--warn)}
+.card.clean{border-left:3px solid var(--accent)}
+.card.plumb{border-left:3px solid var(--ok)}
+.card-hdr{display:flex;align-items:baseline;gap:10px;padding:11px 16px;border-bottom:1px solid var(--border)}
+.card-num{font-size:11px;font-weight:700;font-family:var(--mono);color:var(--text-dim);flex-shrink:0}
+.card-title{font-weight:600;color:var(--text);font-size:13px;flex:1}
+.tag{font-size:10px;font-family:var(--mono);padding:2px 8px;border-radius:4px;background:var(--surface2);color:var(--text-mid);flex-shrink:0;white-space:nowrap}
+.tag.err{background:#3d0a10;color:var(--err)}
+.tag.warn{background:#3d2e00;color:var(--warn)}
+.tag.accent{background:#0d2040;color:var(--accent)}
+.tag.ok{background:#0d2e1e;color:var(--ok)}
+.card-body{padding:12px 16px;color:var(--text-mid);font-size:13px}
+.card-body p{margin-bottom:9px}
+.card-body p:last-child{margin-bottom:0}
+pre{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:11px 14px;font-family:var(--mono);font-size:11px;line-height:1.6;overflow-x:auto;margin:9px 0;color:#c8c8d8}
+.note{background:#0d2040;border:1px solid #1a3a60;border-radius:6px;padding:10px 14px;color:#6ab0ff;font-size:12px;margin-top:16px}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+th{text-align:left;padding:7px 12px;background:var(--surface);color:var(--text-dim);font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:10px;border-bottom:2px solid var(--border)}
+td{padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text-mid);vertical-align:top}
+td:first-child{font-family:var(--mono);color:var(--text-dim);font-size:11px;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--surface)}
+</style>
+</head>
+<body>
+<h1>Franz Panel - Improvement Plan</h1>
+<div class="subtitle">Layout, UX, data integrity, and plumbing alignment audit for panel.html</div>
+
+<h2>Layout and Resize</h2>
+
+<div class="card bug">
+  <div class="card-hdr">
+    <span class="card-num">#1</span>
+    <span class="card-title">Only horizontal split exists -- no vertical split between swarm and event log</span>
+    <span class="tag err">layout bug</span>
+  </div>
+  <div class="card-body">
+    <p>The current layout has one draggable gutter splitting the screen left/right. The right pane has a fixed max-height:120px event log at the bottom. There is no way to resize the swarm rows area vs the event log area. The event log is hardcoded to 120px regardless of screen height, wasting space on tall screens and being too small on short ones.</p>
+    <p>The request is for a single intersection point that controls all three quadrants simultaneously. This requires a CSS grid with both a column gutter and a row gutter on the right pane, meeting at one draggable corner handle.</p>
+    <p>Proposed structure:</p>
+    <pre>body
+  #root  (CSS grid: [left-col] [v-gutter 5px] [right-col] / [top-row] [h-gutter 5px] [bottom-row])
+    #pane-canvas      grid-column:1 / grid-row:1/4  (spans full height, left side)
+    #v-gutter         grid-column:2 / grid-row:1/4  (vertical divider, full height)
+    #pane-swarm       grid-column:3 / grid-row:1    (top-right: agent rows)
+    #h-gutter         grid-column:3 / grid-row:2    (horizontal divider, right side only)
+    #pane-log         grid-column:3 / grid-row:3    (bottom-right: event log)
+    #corner-handle    positioned at intersection of v-gutter and h-gutter</pre>
+    <p>The corner handle sits at the intersection. Dragging it updates both splitX (column) and splitY (row) simultaneously. Each quadrant then fills its grid cell completely. The canvas pane spans all rows on the left.</p>
+  </div>
+</div>
+
+<div class="card bug">
+  <div class="card-hdr">
+    <span class="card-num">#2</span>
+    <span class="card-title">--split-x CSS variable in :root is dead -- JS overwrites it before first paint</span>
+    <span class="tag err">dead CSS</span>
+  </div>
+  <div class="card-body">
+    <p>:root declares --split-x:55% and #root uses var(--split-x) in grid-template-columns. JS calls applyLayout() synchronously on load which sets rootEl.style.gridTemplateColumns as an inline style, overriding the CSS variable before any paint. The variable is never rendered. Remove it and set the initial grid via JS only, consistent with how resize works.</p>
+    <pre>// remove from :root:
+--split-x: 55%
+
+// remove from #root rule:
+grid-template-columns: var(--split-x) 5px 1fr
+
+// JS already handles this correctly via applyLayout() on load</pre>
+  </div>
+</div>
+
+<div class="card bug">
+  <div class="card-hdr">
+    <span class="card-num">#3</span>
+    <span class="card-title">fitCanvas is not called when the right pane resizes vertically</span>
+    <span class="tag err">layout bug</span>
+  </div>
+  <div class="card-body">
+    <p>fitCanvas() is called on window resize and on horizontal gutter drag. If a vertical gutter is added (issue #1), dragging it changes the canvas pane height but fitCanvas() is not triggered. The canvas will not re-center or rescale until the next window resize event. The vertical gutter drag handler must also call fitCanvas().</p>
+  </div>
+</div>
+
+<div class="card ux">
+  <div class="card-hdr">
+    <span class="card-num">#4</span>
+    <span class="card-title">canvas-stack uses fixed px sizing set by JS but canvasWrap uses flex centering -- mismatch on resize</span>
+    <span class="tag warn">layout</span>
+  </div>
+  <div class="card-body">
+    <p>canvasStack is a position:relative div whose width/height are set in px by fitCanvas(). The two canvas elements inside it are position:absolute. This works but the stack div itself has no intrinsic size before the first frame arrives, causing canvasWrap to have nothing to center. A min-width/min-height of 1px on canvasStack prevents a zero-size layout flash. Also canvasStack should not use position:relative with absolute children for this use case -- both canvases should be stacked via CSS grid (grid-area:1/1) which is cleaner and does not require the absolute positioning hack.</p>
+    <pre>/* cleaner stack without absolute positioning */
+#canvas-stack { display: grid }
+#canvas-stack canvas { grid-area: 1 / 1 }
+#c-overlay { pointer-events: none }</pre>
+  </div>
+</div>
+
+<h2>Swarm Panel UX</h2>
+
+<div class="card ux">
+  <div class="card-hdr">
+    <span class="card-num">#5</span>
+    <span class="card-title">swarm-rows does not auto-scroll to the most recently updated agent</span>
+    <span class="tag warn">UX</span>
+  </div>
+  <div class="card-body">
+    <p>When a new swarm message arrives, upsertAgentRow updates the existing row in place but does not scroll it into view. The most active agent (Grok, which receives the most messages) may be off-screen. The row that was just updated should be scrolled into view unless the user has manually scrolled away, in which case auto-scroll should be suppressed to avoid fighting the user.</p>
+    <p>Implementation: track whether the user has scrolled up manually. If swarmRows.scrollTop + swarmRows.clientHeight >= swarmRows.scrollHeight - 40 (near bottom), auto-scroll the updated row into view. If the user has scrolled up, do not auto-scroll.</p>
+    <pre>// after upsertAgentRow updates a row:
+const nearBottom = swarmRows.scrollHeight - swarmRows.scrollTop - swarmRows.clientHeight < 60;
+if (nearBottom) agentRows[agent].row.scrollIntoView({block: 'nearest', behavior: 'smooth'});</pre>
+  </div>
+</div>
+
+<div class="card ux">
+  <div class="card-hdr">
+    <span class="card-num">#6</span>
+    <span class="card-title">agent-row-body max-height:400px is a hardcoded guess that clips long outputs</span>
+    <span class="tag warn">UX</span>
+  </div>
+  <div class="card-body">
+    <p>The expanded body uses max-height:400px for the CSS transition. A 2B model output can easily exceed 400px of rendered text. The content is clipped with no scroll and no visual indicator that it is clipped. The body should be scrollable when expanded, or max-height should be set to a percentage of the pane height rather than a fixed pixel value. Given the new three-quadrant layout, max-height:calc(var(--swarm-h) - 120px) or simply overflow-y:auto on the body with a large max-height would work.</p>
+    <pre>.agent-row-body.open {
+    max-height: 60vh;   /* relative to viewport, not hardcoded */
+    overflow-y: auto;
+    padding: 6px 12px;
+}</pre>
+  </div>
+</div>
+
+<div class="card ux">
+  <div class="card-hdr">
+    <span class="card-num">#7</span>
+    <span class="card-title">agent-row-preview uses -webkit-line-clamp but the row is updated in place -- stale preview on collapse</span>
+    <span class="tag warn">UX</span>
+  </div>
+  <div class="card-body">
+    <p>The preview div shows 2 lines of the last message. When the row is open and a new message arrives, preview.textContent is updated but the user sees the expanded body. When they collapse, the preview now shows the new message correctly. This is fine. However the preview and the body text are set to the same value -- the full text. The preview is just a CSS-clamped version of the full text. This is correct and no change is needed here, but it is worth noting that the preview div is redundant with the body textEl -- they always contain identical content. The preview could be removed and the body could show a 2-line clamp when collapsed, expanding on click. This removes one DOM element per agent row.</p>
+    <pre>/* collapsed state: clamp the body text directly */
+.agent-row-body { -webkit-line-clamp: 2; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden }
+.agent-row-body.open { -webkit-line-clamp: unset; display: block; overflow-y: auto }
+/* removes the need for agent-row-preview entirely */</pre>
+  </div>
+</div>
+
+<div class="card ux">
+  <div class="card-hdr">
+    <span class="card-num">#8</span>
+    <span class="card-title">event-log prepends entries (newest at top) but swarm-rows appends (newest at bottom) -- inconsistent direction</span>
+    <span class="tag warn">UX</span>
+  </div>
+  <div class="card-body">
+    <p>uiLog() uses eventLogEl.prepend() so the newest log entry is at the top. The swarm rows are appended to swarmRows so the newest agent row is at the bottom. Since rows are upserted in place (one row per agent, never appended), the order is fixed at first-seen order. This is fine. But the event log scrolling direction is opposite to what a user expects if they think of both panels as "latest at bottom". The event log should also append and auto-scroll to bottom, consistent with the swarm panel direction.</p>
+  </div>
+</div>
+
+<h2>Status Bar and Counters</h2>
+
+<div class="card clean">
+  <div class="card-hdr">
+    <span class="card-num">#9</span>
+    <span class="card-title">"cycle: N" in the status bar shows swarmTotal which is the raw swarm message index -- not a cycle count</span>
+    <span class="tag accent">misleading data</span>
+  </div>
+  <div class="card-body">
+    <p>The status bar shows "cycle: N" where N is swarmTotal -- the total number of swarm wire messages ever received. This is not a cycle count. One brain cycle produces approximately 16 swarm messages (5 agents x 3 debate rounds + Grok input + Grok output). Showing the raw message index as "cycle" is misleading. Options:</p>
+    <p>1. Remove the counter entirely -- it adds no actionable information.</p>
+    <p>2. Rename it to "msgs: N" to accurately describe what it counts.</p>
+    <p>3. Remove it and replace the status bar with only: brand | seq | SSE status. That is all the information that is actually useful at a glance.</p>
+    <p>The "seq" counter (frame sequence number) is useful -- it tells you how many frames have been captured and annotated. Keep that. Remove "cycle".</p>
+    <pre>/* proposed minimal status bar */
+Franz  |  seq: 42  |  (SSE dot) SSE</pre>
+  </div>
+</div>
+
+<div class="card clean">
+  <div class="card-hdr">
+    <span class="card-num">#10</span>
+    <span class="card-title">badge-img shows "seq N ok/fail" -- redundant with sb-seq and canvas-status</span>
+    <span class="tag accent">redundant info</span>
+  </div>
+  <div class="card-body">
+    <p>The canvas pane header shows a badge with "seq 42 ok" or "seq 42 fail". The status bar already shows the frame seq number. The canvas-status overlay already shows the canvas resolution. The badge duplicates seq from the status bar and adds ok/fail which is only relevant for ~200ms during annotation. After annotation completes it just shows a stale "ok" badge that means nothing. Replace the badge with a simple annotation status indicator: a colored dot that pulses during annotation and goes green/red on completion, then fades. Or remove it entirely and rely on canvas-status for resolution info.</p>
+  </div>
+</div>
+
+<h2>Data Integrity and Plumbing Alignment</h2>
+
+<div class="card plumb">
+  <div class="card-hdr">
+    <span class="card-num">#11</span>
+    <span class="card-title">Panel modifies no hub data -- plumbing contract is clean with one exception</span>
+    <span class="tag ok">mostly clean</span>
+  </div>
+  <div class="card-body">
+    <p>The panel is correctly passive. It receives data via SSE and GET /frame, renders it, and POSTs back only the annotated image via /annotated. It does not modify swarm messages, agent states, config, or event log entries. The only POST it makes is /annotated which is a required part of the annotation pipeline -- the hub cannot function without it. This is correct architecture and requires no change.</p>
+    <p>The panel does not need any hub plumbing changes to implement all improvements in this plan.</p>
+  </div>
+</div>
+
+<div class="card plumb">
+  <div class="card-hdr">
+    <span class="card-num">#12</span>
+    <span class="card-title">fallbackPoll starts immediately on load before SSE has a chance to connect</span>
+    <span class="tag warn">plumbing</span>
+  </div>
+  <div class="card-body">
+    <p>The last two lines of the script are:</p>
+    <pre>fallbackTimer = setInterval(fallbackPoll, POLL_MS);
+startSSE();</pre>
+    <p>fallbackPoll starts running immediately, before SSE has connected. The first poll fires at 2500ms. If SSE connects within that window (which it always will on localhost), the poll fires once unnecessarily and then gets cleared. This is harmless but contradicts the stated rule that fallback polling only activates after SSE failure. The fix is to not start fallbackTimer at all on load -- only start it inside es.onerror. startSSE() alone is sufficient on load.</p>
+    <pre>// remove these two lines:
+fallbackTimer = setInterval(fallbackPoll, POLL_MS);  // remove
+startSSE();  // keep
+
+// fallbackPoll only starts inside es.onerror, which is already the case</pre>
+  </div>
+</div>
+
+<div class="card plumb">
+  <div class="card-hdr">
+    <span class="card-num">#13</span>
+    <span class="card-title">SSE reconnect is never attempted after connection loss</span>
+    <span class="tag warn">plumbing</span>
+  </div>
+  <div class="card-body">
+    <p>When SSE errors, the panel switches to fallback polling and never tries to reconnect SSE. EventSource has built-in reconnect behavior but only if the connection was cleanly closed by the server. If the hub restarts, the EventSource object is in an error state and will not reconnect automatically in all cases. The panel should attempt to recreate the EventSource after a delay when SSE is lost, so it can recover when the hub comes back up without requiring a page reload.</p>
+    <pre>es.onerror = () => {
+    if (sseConnected) {
+        sseConnected = false;
+        sseDot.className = 'sse-dot dead';
+        if (!fallbackTimer) fallbackTimer = setInterval(fallbackPoll, POLL_MS);
+    }
+    // attempt SSE reconnect after 5s
+    setTimeout(startSSE, 5000);
+};</pre>
+  </div>
+</div>
+
+<div class="card plumb">
+  <div class="card-hdr">
+    <span class="card-num">#14</span>
+    <span class="card-title">handleFrame has no guard against being called with a seq older than the last completed annotation</span>
+    <span class="tag warn">plumbing</span>
+  </div>
+  <div class="card-body">
+    <p>handleFrame guards with seqNum &lt;= lastPendingSeq. lastPendingSeq is set to seqNum at the start of handleFrame and never reset on failure. If handleFrame fails mid-way (fetch error, postAnnotated returns false), lastPendingSeq remains at the failed seq. The next SSE frame event with the same seq (hub retries are not implemented but fallbackPoll could trigger it) would be silently dropped. This is acceptable given the current hub does not retry, but the variable name lastPendingSeq is misleading -- it is actually lastAttemptedSeq. Rename for clarity.</p>
+  </div>
+</div>
+
+<div class="card clean">
+  <div class="card-hdr">
+    <span class="card-num">#15</span>
+    <span class="card-title">cycleCount variable declared but never used</span>
+    <span class="tag accent">dead code</span>
+  </div>
+  <div class="card-body">
+    <p>let cycleCount = 0 is declared at module scope and never read or written after declaration. Remove it.</p>
+    <pre>let cycleCount = 0;  // remove entirely</pre>
+  </div>
+</div>
+
+<div class="card clean">
+  <div class="card-hdr">
+    <span class="card-num">#16</span>
+    <span class="card-title">--radius CSS variable declared but never referenced</span>
+    <span class="tag accent">dead CSS</span>
+  </div>
+  <div class="card-body">
+    <p>--radius: 10px is in :root but no CSS rule uses var(--radius). Remove it.</p>
+  </div>
+</div>
+
+<div class="card clean">
+  <div class="card-hdr">
+    <span class="card-num">#17</span>
+    <span class="card-title">OffscreenCanvas merge block duplicated in exportAnnotated and btn-save-log handler</span>
+    <span class="tag accent">duplicate code</span>
+  </div>
+  <div class="card-body">
+    <p>The save handler duplicates the OffscreenCanvas draw+export logic instead of calling exportAnnotated(). The save handler should call exportAnnotated() directly and convert the returned base64 to a data URI for the img tag.</p>
+    <pre>// btn-save-log handler -- replace the duplicate block with:
+const annB64 = await exportAnnotated();
+const canvasDataUri = annB64 ? 'data:image/png;base64,' + annB64 : '';</pre>
+  </div>
+</div>
+
+<div class="card clean">
+  <div class="card-hdr">
+    <span class="card-num">#18</span>
+    <span class="card-title">document.getElementById('badge-img') called 3x uncached inside handleFrame</span>
+    <span class="tag accent">duplicate query</span>
+  </div>
+  <div class="card-body">
+    <p>badge-img is queried three times inside handleFrame on every frame. Cache it at module init alongside the other element references.</p>
+    <pre>const badgeImg = document.getElementById('badge-img');
+const sbSeq = document.getElementById('sb-seq');
+const sbCycle = document.getElementById('sb-cycle');
+// then use badgeImg directly in handleFrame and handleSwarmMsg</pre>
+  </div>
+</div>
+
+<h2>Hub Plumbing Changes Required</h2>
+
+<div class="note">
+  None of the improvements above require any changes to franz_hub.py or brain_agentic.py. The panel receives all necessary data through existing SSE events (state, frame, swarm, agent_status, log) and the existing GET /frame + POST /annotated pipeline. The three-quadrant layout, auto-scroll, SSE reconnect, dead code removal, and counter cleanup are all purely panel-side changes. The hub plumbing contract is already correct for what the panel needs.
+</div>
+
+<h2>Summary</h2>
+
+<table>
+  <thead>
+    <tr><th>#</th><th>Category</th><th>Change</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td>Layout</td><td>Add vertical gutter on right pane -- three-quadrant layout with single corner handle</td></tr>
+    <tr><td>2</td><td>Layout</td><td>Remove dead --split-x CSS variable, drive layout from JS only</td></tr>
+    <tr><td>3</td><td>Layout</td><td>Call fitCanvas() on vertical gutter drag</td></tr>
+    <tr><td>4</td><td>Layout</td><td>Replace absolute-positioned canvas stack with CSS grid stack</td></tr>
+    <tr><td>5</td><td>UX</td><td>Auto-scroll swarm rows to most recently updated agent (suppress if user scrolled up)</td></tr>
+    <tr><td>6</td><td>UX</td><td>Replace hardcoded max-height:400px on expanded body with relative value + overflow-y:auto</td></tr>
+    <tr><td>7</td><td>UX</td><td>Remove agent-row-preview div, apply line-clamp directly to body in collapsed state</td></tr>
+    <tr><td>8</td><td>UX</td><td>Change event log to append+auto-scroll (consistent direction with swarm panel)</td></tr>
+    <tr><td>9</td><td>Data</td><td>Remove "cycle" counter from status bar -- it shows raw message index, not cycles</td></tr>
+    <tr><td>10</td><td>Data</td><td>Replace badge-img seq text with a simple annotation pulse dot</td></tr>
+    <tr><td>11</td><td>Plumbing</td><td>No hub changes needed -- panel is already correctly passive</td></tr>
+    <tr><td>12</td><td>Plumbing</td><td>Remove fallbackTimer start on load -- only start inside es.onerror</td></tr>
+    <tr><td>13</td><td>Plumbing</td><td>Add SSE reconnect attempt after 5s on connection loss</td></tr>
+    <tr><td>14</td><td>Plumbing</td><td>Rename lastPendingSeq to lastAttemptedSeq for accuracy</td></tr>
+    <tr><td>15</td><td>Dead code</td><td>Remove cycleCount variable</td></tr>
+    <tr><td>16</td><td>Dead code</td><td>Remove --radius CSS variable</td></tr>
+    <tr><td>17</td><td>Duplicate</td><td>Save handler calls exportAnnotated() instead of duplicating the OffscreenCanvas block</td></tr>
+    <tr><td>18</td><td>Duplicate</td><td>Cache badge-img and other repeatedly queried elements at module init</td></tr>
+  </tbody>
+</table>
+
+</body>
+</html>
